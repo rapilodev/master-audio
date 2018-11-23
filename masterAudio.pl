@@ -22,7 +22,6 @@ $env = '';
 my $ffmpeg = $ENV{HOME} . '/build/ffmpeg/build/bin/ffmpeg';
 $ffmpeg = $ENV{HOME} . '/build/ffmpeg/bin/ffmpeg' unless -e $ffmpeg;
 $ffmpeg = '/home/radio/bin/bin/ffmpeg'            unless -e $ffmpeg;
-die("cannot find ffmpeg $ffmpeg") unless -e $ffmpeg;
 
 my $encoder     = '-ar 44100 -codec:a libmp3lame -b:sample_fmt s16 -b:a 192k';
 my $tempEncoder = '-acodec pcm_s24le -ar 48000';
