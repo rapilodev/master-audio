@@ -5,28 +5,25 @@
 use strict;
 use warnings;
 
-$| = 1;
-
 use Data::Dumper;
 use File::Basename;
 use Term::ANSIColor qw(:constants);
 use File::Copy;
 use Cwd;
 use Getopt::Long;
+use IO::Handle;
 
-my $oldDir = getcwd();
+STDOUT->autoflush(1);
 
 my $env = 'export LD_LIBRARY_PATH=/usr/local/lib/i386-linux-gnu/;';
 $env = '';
 
-my $ffmpeg = $ENV{HOME} . '/build/ffmpeg/build/bin/ffmpeg';
-$ffmpeg = $ENV{HOME} . '/build/ffmpeg/bin/ffmpeg' unless -e $ffmpeg;
-$ffmpeg = '/home/radio/bin/bin/ffmpeg'            unless -e $ffmpeg;
+my $ffmpeg = '';
 
-my $encoder     = '-ar 44100 -codec:a libmp3lame -b:sample_fmt s16 -b:a 192k';
-my $tempEncoder = '-acodec pcm_s24le -ar 48000';
+#-sample_fmt s16
+my $encoder     = '-ac 2 -ar 44100 -codec:a libmp3lame -b:a 192k';
+my $tempEncoder = '-acodec pcm_s24le -ac 2 -ar 44100';
 my $tempDir     = '/var/tmp/convert';
-my $verbose     = 0;
 my $tempFiles   = [];
 
 my $inputFile  = '';
@@ -61,7 +58,7 @@ sub execute($;$) {
     print STDERR "--EXEC--- $$ " . YELLOW . $command . RESET . "\n";
     my $result   = `$command 2>&1`;
     my $exitCode = $? >> 8;
-    print STDERR "OUTPUT:" . $result if $verbose || $outputResult || ( $exitCode > 0 );
+    print STDERR "OUTPUT:" . $result if $outputResult || ( $exitCode > 0 );
     return $result;
 }
 
@@ -76,6 +73,7 @@ sub processFile {
         info("skip file, output file $outFile already exists");
         return;
     }
+
     unless ( -e $inFile ) {
         info("skip file, file $inFile does not exist");
         return;
@@ -89,31 +87,31 @@ sub processFile {
 
     my $stats = showStats($inFile);
     $duration = parseDuration($stats) if $duration == 0;
-
     $inFile = setDuration( $inFile, $duration ) if $duration > 0;
     return unless -e $inFile;
 
     $inFile = setEqualChannelVolume($inFile);
     return unless -e $inFile;
 
-    showStats($inFile);
+    #showStats($inFile);
     my $maxVolume = getPeakVolume($inFile);
     info "maxVolume:$maxVolume dB";
     my $removeInFile = 0;
     if ( $maxVolume < -10 ) {
         $inFile = setVolume( $inFile, -$maxVolume - 1 );
         return unless -e $inFile;
-        showStats($inFile);
+        #showStats($inFile);
         $removeInFile = 1;
     } else {
-        info "peak level is to high for peak normalization";
+        info "peak normalization not necessary because peak level is high enough";
     }
 
     $inFile = twoPass($inFile);
     return unless -e $inFile;
 
     showStats($inFile);
-    copy( $inFile, $outFile );
+    info "move '$inFile' to '$outFile'";
+    File::Copy::move( $inFile, $outFile );
 }
 
 sub showStats {
@@ -246,19 +244,6 @@ sub setVolume {
     return $outFile;
 }
 
-sub singlePass {
-    my $inFile = shift;
-
-    my $outFile = getTempFile( $inFile, 'mp3' );
-
-    info "\n### singlePass '$inFile' -> '$outFile'";
-    my $audioDuration = getDuration($inFile);
-    my $fadeFilter = getFadeInFilter($fadeInDuration) . "," . getFadeOutFilter( $audioDuration, $fadeOutDuration );
-
-    execute qq{$env $ffmpeg -i '$inFile' -af '$loudNormFilter' $encoder '$outFile'};
-    return $outFile;
-}
-
 sub twoPass {
     my $inFile = shift;
 
@@ -355,7 +340,21 @@ sub getTempFile {
     return $file;
 }
 
-sub configure {
+sub cleanUp {
+    for my $file (@$tempFiles) {
+        if ( -f $file ) {
+            info "cleanup: delete '$file'";
+            unlink $file;
+        }
+    }
+    $tempFiles = [];
+}
+
+END {
+    cleanUp();
+}
+
+{ # main
     my $help = 0;
 
     GetOptions(
@@ -365,7 +364,6 @@ sub configure {
         "ffmpeg=s"   => \$ffmpeg,
         "tempDir=s"  => \$tempDir,
         "help"       => \$help,
-        "verbose=i"  => \$verbose
     ) or die("Error in command line arguments\n");
 
     if ($help) {
@@ -383,16 +381,11 @@ sub configure {
         };
         exit 0;
     }
-}
-
-sub main {
 
     mkdir $tempDir unless -e $tempDir;
-    die("could not create $tempDir") unless -e $tempDir;
-
-    die("cannot find ffmpeg at $ffmpeg")    unless -e $ffmpeg;
-    die("cannot execute ffmpeg at $ffmpeg") unless -x $ffmpeg;
-
+    die("could not create $tempDir")              unless -e $tempDir;
+    die("cannot find ffmpeg at $ffmpeg")          unless -e $ffmpeg;
+    die("cannot execute ffmpeg at $ffmpeg")       unless -x $ffmpeg;
     die("missing --input ")                       unless defined $inputFile;
     die("input file does not exist '$inputFile'") unless -e $inputFile;
     die("missing --output")                       unless defined $outputFile;
@@ -408,22 +401,3 @@ sub main {
     processFile( $inputFile, $outputFile, $duration );
     cleanUp();
 }
-
-sub cleanUp {
-    for my $file (@$tempFiles) {
-        if ( -f $file ) {
-            info "cleanup: delete '$file'";
-            unlink $file;
-        }
-    }
-    $tempFiles = [];
-}
-
-END {
-    cleanUp();
-    chdir $oldDir;
-}
-
-configure();
-main();
-

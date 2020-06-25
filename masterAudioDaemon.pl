@@ -10,15 +10,14 @@ use IO::Socket();
 use File::Copy;
 use Cwd          ();
 use Getopt::Long ();
-
 use IO::Handle;
+
 use lib '../calcms';
 use config;
 use db;
 use audio_recordings;
 use events;
 
-STDERR->autoflush(1);
 STDOUT->autoflush(1);
 
 my $config = config::get('../../piradio.de/agenda/config/config.cgi');
@@ -26,11 +25,13 @@ my $config = config::get('../../piradio.de/agenda/config/config.cgi');
 my $dir     = '/home/radio/recordings/';
 my $help    = undef;
 my $logFile = undef;
+my $ffmpeg  = undef;
 
 Getopt::Long::GetOptions(
-    "dir=s"  => \$dir,
-    "h|help" => \$help,
-    "log=s"  => \$logFile
+    "dir=s"    => \$dir,
+    "h|help"   => \$help,
+    "ffmpeg=s" => \$ffmpeg,
+    "log=s"    => \$logFile
 );
 
 if ( defined $help ) {
@@ -39,28 +40,14 @@ usage $0 OPTIONS
 
 files in dir are ignored if file name contains ".master." or ends with ".off"
 start: nohup /home/radio/calcms/tools/masterAudioDaemon.pl &
---dir   path to recordings
---log   log file
---help  show this help
+--dir     path to recordings
+--ffmpeg  path to ffmpeg
+--log     log file
+--help    show this help
 };
 }
 
-if ( defined $logFile ) {
-
-    if ( -e $logFile ) {
-        my @stat = stat $logFile;
-        if ( scalar @stat != 0 ) {
-            my $size = $stat[7];
-            unlink $logFile if $size > 100 * 1000 * 1000;
-        }
-    }
-
-    close STDOUT;
-    open( STDOUT, ">>", $logFile ) or die "Cannot open STDOUT: $!";
-
-    close STDERR;
-    open( STDERR, ">>", $logFile ) or die "Cannot open STDERR: $!";
-}
+reopenLogFile($logFile) if defined $logFile;
 
 my $socket = makeSingleInstance(60000);
 
@@ -80,6 +67,7 @@ while (1) {
 
     info("wait $sleep seconds");
     sleep $sleep;
+    reopenLogFile($logFile) if defined $logFile;
 }
 
 sub execute($;$) {
@@ -153,6 +141,7 @@ sub processAudio {
     $command .= " --duration '$eventDuration'" if $eventDuration > 0;
     $command .= " --input '$source'";
     $command .= " --output '$target'";
+    $command .= " --ffmpeg '$ffmpeg'";
 
     info( "execute: " . $command );
     system($command);
@@ -206,8 +195,6 @@ sub fixDate {
     $entry->{modified_at} = getFileModifiedAt($file);
     $dbh = db::connect($config) unless defined $dbh;
     audio_recordings::update( $config, $dbh, $entry );
-
-    #exit;
 }
 
 sub inspect {
@@ -344,7 +331,6 @@ sub getRecording {
         );
         return undef unless scalar @$recordings == 1;
         $recordings->[0]->{mastered} = 0;
-
         #print STDERR Dumper $recordings;
 
     }
@@ -471,3 +457,23 @@ sub makeSingleInstance {
     info("bound to port");
     return $socket;
 }
+
+sub reopenLogFile{
+    my $logFile=shift;
+    return unless defined $logFile;
+
+    if ( -e $logFile ) {
+        my @stats = stat $logFile;
+        if ( scalar @stats != 0 ) {
+            my $size = $stats[7];
+            unlink $logFile if $size > 1000 * 1000 * 1000;
+        }
+    }
+
+    close STDOUT;
+    open( STDOUT, ">>", $logFile ) or die "Cannot open STDOUT: $!";
+
+    close STDERR;
+    open( STDERR, ">>", $logFile ) or die "Cannot open STDERR: $!";
+}
+
